@@ -1,9 +1,3 @@
-"""
-KartikMusic - Telegram Music Bot
-Copyright (c) 2026 Kartik
-Converted & Fixed for KartikMusic Module
-"""
-
 import re
 import os
 from typing import Optional, Any
