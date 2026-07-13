@@ -25,10 +25,11 @@ class DirectLinkHandler:
         output_path = os.path.join(download_dir, f"kartik_{unique_id}.{file_ext}")
         url = track.get("url")
         
+        # BINA COOKIES BYPASS: Android client use karke YouTube ko ullu banana
         if is_video:
-            ydl_opts = "-f bestvideo+bestaudio/best --no-playlist"
+            ydl_opts = "-f bestvideo+bestaudio/best --no-playlist --extractor-args \"youtube:player_client=android,web\""
         else:
-            ydl_opts = "-f bestaudio --extract-audio --audio-format mp3 --no-playlist"
+            ydl_opts = "-f bestaudio --extract-audio --audio-format mp3 --no-playlist --extractor-args \"youtube:player_client=android,web\""
             
         cmd = f'yt-dlp {ydl_opts} -o "{output_path}" "{url}"'
         
@@ -48,7 +49,7 @@ class DirectLinkHandler:
                     return os.path.join(download_dir, file)
             raise FileNotFoundError("Downloaded file not found on server.")
                     
-        return output_path
+        return os.path.abspath(output_path)  # Absolute path return karega crash se bachne ke liye
 
 async def download_cached_track(cached: Any, bot: Any) -> str:
     if not cached:
