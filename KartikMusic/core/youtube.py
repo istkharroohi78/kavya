@@ -13,6 +13,7 @@ import os
 import random
 import re
 import urllib.parse
+import time
 
 import aiohttp
 from py_yt import Playlist, Recommendations, VideosSearch
@@ -221,8 +222,6 @@ class YouTube:
         link = self._clean_link(link)
 
         # Avoid redundant prefetches within 30 seconds
-        import time
-
         now = time.time()
         regex = r"(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^\"&?\/\s]{11})"
         match = re.search(regex, link)
@@ -256,6 +255,47 @@ class YouTube:
     async def get_related(
         self, video_id: str, video: bool = False, max_duration: int = 0
     ) -> Track | None:
+        # 1. API First Approach
+        client = await self.get_client()
+        params = {"video_id": video_id}
+        if API_KEY:
+            params["api_key"] = API_KEY
+
+        try:
+            async with client.get(f"{API_URL}/related", params=params) as response:
+                if response.status == 200:
+                    data_json = await response.json()
+                    # Handle API response (it might be under 'result' or 'videos')
+                    results = data_json.get("result") or data_json.get("videos")
+                    if results:
+                        # Filter for video types and apply max duration
+                        videos = [r for r in results if r.get("type", "video") == "video"]
+
+                        if max_duration:
+                            videos = [
+                                v
+                                for v in videos
+                                if utils.to_seconds(v.get("duration") or "00:00")
+                                <= max_duration
+                            ]
+
+                        if videos:
+                            data = random.choice(videos)
+                            return Track(
+                                id=data.get("id"),
+                                channel_name=data.get("channel", {}).get("name") if isinstance(data.get("channel"), dict) else data.get("channel", ""),
+                                duration=data.get("duration"),
+                                duration_sec=utils.to_seconds(data.get("duration") or "00:00"),
+                                title=data.get("title")[:25],
+                                thumbnail=data.get("thumbnails", [{}])[-1].get("url").split("?")[0] if data.get("thumbnails") else "",
+                                url=data.get("link") or f"https://www.youtube.com/watch?v={data.get('id')}",
+                                user="Autoplay",
+                                video=video,
+                            )
+        except Exception as e:
+            logger.error(f"API Error fetching related videos, switching to fallback: {e}")
+
+        # 2. Fallback Approach (Original py_yt Method)
         try:
             _results = await Recommendations.getRelated(video_id)
             if not isinstance(_results, dict):
@@ -288,7 +328,8 @@ class YouTube:
                     video=video,
                 )
         except Exception as e:
-            logger.error(f"Error fetching related videos: {e}")
+            logger.error(f"Error fetching related videos from fallback: {e}")
+            
         return None
 
     async def download(self, video_id: str, video: bool = False) -> str | None:
