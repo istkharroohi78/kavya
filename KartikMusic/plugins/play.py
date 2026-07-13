@@ -8,6 +8,7 @@
 # All rights reserved.
 #
 
+import os  # <--- CRITICAL FIX: Yeh import miss ho gaya tha
 from pathlib import Path
 from pyrogram import filters, types
 from KartikMusic import Kartik, app, config, db, lang, queue, tg, yt
@@ -132,7 +133,6 @@ async def play_hndlr(
                 )
             return
 
-    # DOWNLOADING & STREAMING OVERWRITE LOGIC
     if not file.file_path:
         fname = f"downloads/{file.id}.{'mp4' if video else 'webm'}"
         if Path(fname).exists():
@@ -159,9 +159,9 @@ async def play_hndlr(
             except Exception:
                 file.file_path = await yt.download(file.id, video=video)
 
-    # CRITICAL FIX: pytgcalls ko block se bachane ke liye url me local path inject karna
+    # Ab 'os' successfully imported hai, crash nahi hoga!
     if file.file_path and os.path.exists(file.file_path):
-        file.url = file.file_path  # Ab pytgcalls dubara youtube par nahi jayega!
+        file.url = file.file_path
 
     await Kartik.play_media(chat_id=m.chat.id, message=sent, media=file)
     if not tracks:
@@ -170,5 +170,5 @@ async def play_hndlr(
     await app.send_message(
         chat_id=m.chat.id,
         text=m.lang["playlist_queued"].format(len(tracks)) + added,
-            )
-            
+    )
+    
