@@ -22,8 +22,8 @@ from KartikMusic import logger
 from KartikMusic.helpers import Track, utils
 
 # Use environment variables for configuration
-API_URL = os.getenv("API_URL", "http://yt.riteshyt.in").rstrip("/")
-API_KEY = os.getenv("API_KEY", "riteshfree4")
+API_URL = os.getenv("API_URL", "https://api.onegrab.fun").rstrip("/")
+API_KEY = os.getenv("API_KEY", "fbee25_x8FqJTStnOF5Ry5vGzMXTbR8zmuJ0H29") # Get this value from @FallenApiBot by sending /apikey
 
 
 async def download_assistant(query: str, dl_type: str) -> str:
