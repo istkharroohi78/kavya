@@ -8,148 +8,140 @@
 # All rights reserved.
 #
 
-from pathlib import Path
-from pyrogram import filters, types
-from KartikMusic import Kartik, app, config, db, lang, queue, tg, yt
-from KartikMusic.helpers import buttons, utils
-from KartikMusic.helpers._play import checkUB
+import asyncio
+
+from pyrogram import enums, errors, types
+
+from KartikMusic import app, config, db, logger, queue, yt
+from KartikMusic.helpers import utils
 
 
-def playlist_to_queue(chat_id: int, tracks: list) -> str:
-    text = "<blockquote expandable>"
-    for track in tracks:
-        pos = queue.add(chat_id, track)
-        text += f"<b>{pos}.</b> {track.title}\n"
-    text = text[:1948] + "</blockquote>"
-    return text
+def checkUB(play):
+    async def wrapper(_, m: types.Message, *args, **kwargs):
+        if not m.from_user:
+            return await m.reply_text(m.lang["play_user_invalid"])
 
+        chat_id = m.chat.id
+        if m.chat.type != enums.ChatType.SUPERGROUP:
+            await m.reply_text(m.lang["play_chat_invalid"])
+            return await app.leave_chat(chat_id)
 
-# BINA COMMAND (Bina /) KE BHI CHALNE KE LIYE FILTER
-@app.on_message(
-    (
-        filters.command(["play", "playforce", "vplay", "vplayforce"]) 
-        | (filters.text & ~filters.command([]))
-    )
-    & filters.group
-    & ~app.bl_users
-)
-@lang.language()
-@checkUB
-async def play_hndlr(
-    _,
-    m: types.Message,
-    force: bool = False,
-    m3u8: bool = False,
-    video: bool = False,
-    url: str = None,
-) -> None:
-    sent = await m.reply_text(m.lang["play_searching"])
-    file = None
-    mention = m.from_user.mention
-    media = tg.get_media(m.reply_to_message) if m.reply_to_message else None
-    tracks = []
+        # 100% Crash Fix: Safe command extraction (NoneType error avoided)
+        command = m.command or []
+        cmd_name = command[0] if command else ""
 
-    if media:
-        setattr(sent, "lang", m.lang)
-        file = await tg.download(m.reply_to_message, sent)
+        if not m.reply_to_message:
+            if command:
+                if len(command) < 2 or (len(command) == 2 and command[1] == "-f"):
+                    return await m.reply_text(m.lang["play_usage"])
+            elif not m.text:
+                return await m.reply_text(m.lang["play_usage"])
 
-    elif m3u8:
-        file = await tg.process_m3u8(url, sent.id, video)
-
-    elif url:
-        if "playlist" in url:
-            await sent.edit_text(m.lang["playlist_fetch"])
-            tracks = await yt.playlist(config.PLAYLIST_LIMIT, mention, url, video)
-
-            if not tracks:
-                return await sent.edit_text(m.lang["playlist_error"])
-
-            file = tracks[0]
-            tracks.remove(file)
-            file.message_id = sent.id
-        else:
-            file = await yt.search(url, sent.id, video=video)
-
-        if not file:
-            return await sent.edit_text(
-                m.lang["play_not_found"].format(config.SUPPORT_CHAT)
+        if len(queue.get_queue(chat_id)) >= config.QUEUE_LIMIT:
+            return await m.reply_text(
+                m.lang["play_queue_full"].format(config.QUEUE_LIMIT)
             )
 
-    # Command aur normal text dono handle karne ke liye logic
-    elif (m.command and len(m.command) >= 2) or (m.text and not m.text.startswith(("/", "!"))):
-        if m.command and len(m.command) >= 2:
-            query = " ".join(m.command[1:])
-        else:
-            query = m.text
-
-        file = await yt.search(query, sent.id, video=video)
-        if not file:
-            return await sent.edit_text(
-                m.lang["play_not_found"].format(config.SUPPORT_CHAT)
-            )
-
-    if not file:
-        return await sent.edit_text(m.lang["play_usage"])
-
-    if file.duration_sec > config.DURATION_LIMIT:
-        return await sent.edit_text(
-            m.lang["play_duration_limit"].format(config.DURATION_LIMIT // 60)
+        # Safe checks for 'force' and 'video'
+        force = (
+            kwargs.get("force")
+            or cmd_name.endswith("force")
+            or (len(command) > 1 and "-f" in command[1])
         )
+        video = kwargs.get("video") or (cmd_name and cmd_name.startswith("v") and config.VIDEO_PLAY)
+        url = kwargs.get("url") or utils.get_url(m)
+        
+        if url and yt.invalid(url):
+            return await m.reply_text(
+                m.lang["play_not_found"].format(config.SUPPORT_CHAT)
+            )
+        m3u8 = kwargs.get("m3u8") or (url and not yt.valid(url))
 
-    if await db.is_logger():
-        await utils.play_log(m, sent.link, file.title, file.duration)
+        play_mode = await db.get_play_mode(chat_id)
+        if play_mode or force:
+            adminlist = await db.get_admins(chat_id)
+            if (
+                m.from_user.id not in adminlist
+                and not await db.is_auth(chat_id, m.from_user.id)
+                and m.from_user.id not in app.sudoers
+            ):
+                return await m.reply_text(m.lang["play_admin"])
 
-    file.user = mention
-    if force:
-        current = queue.get_current(m.chat.id)
-        if current and current.message_id:
+        if chat_id not in db.active_calls:
+            client = await db.get_client(chat_id)
             try:
-                await app.delete_messages(m.chat.id, current.message_id)
+                member = await app.get_chat_member(chat_id, client.id)
+                if member.status in [
+                    enums.ChatMemberStatus.BANNED,
+                    enums.ChatMemberStatus.RESTRICTED,
+                ]:
+                    try:
+                        await app.unban_chat_member(chat_id=chat_id, user_id=client.id)
+                    except Exception:
+                        return await m.reply_text(
+                            m.lang["play_banned"].format(
+                                app.name,
+                                client.id,
+                                client.mention,
+                                f"@{client.username}" if client.username else None,
+                            )
+                        )
+            except errors.ChatAdminRequired:
+                return await m.reply_text(m.lang["admin_required"])
+            except (
+                errors.UserNotParticipant,
+                errors.exceptions.bad_request_400.UserNotParticipant,
+            ):
+                if m.chat.username:
+                    invite_link = m.chat.username
+                    try:
+                        await client.resolve_peer(invite_link)
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        invite_link = (await app.get_chat(chat_id)).invite_link
+                        if not invite_link:
+                            invite_link = await app.export_chat_invite_link(chat_id)
+                    except errors.ChatAdminRequired:
+                        return await m.reply_text(m.lang["admin_required"])
+                    except Exception as ex:
+                        return await m.reply_text(
+                            m.lang["play_invite_error"].format(type(ex).__name__)
+                        )
+
+                umm = await m.reply_text(m.lang["play_invite"].format(app.name))
+                await asyncio.sleep(2)
+                try:
+                    await client.join_chat(invite_link)
+                except errors.UserAlreadyParticipant:
+                    pass
+                except errors.InviteRequestSent:
+                    await asyncio.sleep(2)
+                    try:
+                        await app.approve_chat_join_request(chat_id, client.id)
+                    except errors.HideRequesterMissing:
+                        pass
+                    except Exception as ex:
+                        return await umm.edit_text(
+                            m.lang["play_invite_error"].format(type(ex).__name__)
+                        )
+                except Exception as ex:
+                    logger.error(f"Error joining chat - {chat_id}: {ex}")
+                    return await umm.edit_text(
+                        m.lang["play_invite_error"].format(type(ex).__name__)
+                    )
+
+                await umm.delete()
+                await client.resolve_peer(chat_id)
+
+        if await db.get_cmd_delete(chat_id):
+            try:
+                await m.delete()
             except Exception:
                 pass
-        queue.force_add(m.chat.id, file)
-    else:
-        position = queue.add(m.chat.id, file)
 
-        if position != 0 or await db.get_call(m.chat.id):
-            await sent.edit_text(
-                m.lang["play_queued"].format(
-                    position,
-                    file.url,
-                    file.title,
-                    file.duration,
-                    m.from_user.mention,
-                ),
-                reply_markup=buttons.play_queued(
-                    m.chat.id, file.id, m.lang["play_now"]
-                ),
-            )
-            if tracks:
-                added = playlist_to_queue(m.chat.id, tracks)
-                await app.send_message(
-                    chat_id=m.chat.id,
-                    text=m.lang["playlist_queued"].format(len(tracks)) + added,
-                )
-            return
+        return await play(_, m, force=force, m3u8=m3u8, video=video, url=url)
 
-    if not file.file_path:
-        fname = f"downloads/{file.id}.{'mp4' if video else 'webm'}"
-        if Path(fname).exists():
-            file.file_path = str(Path(fname).absolute())
-        else:
-            await sent.edit_text(m.lang["play_downloading"])
-            # Jo module missing tha uski wajah se crash na ho, isliye seedhe standard downloader use hoga
-            file.file_path = await yt.download(file.id, video=video)
-
-    if file.file_path and Path(file.file_path).exists():
-        file.url = file.file_path
-
-    await Kartik.play_media(chat_id=m.chat.id, message=sent, media=file)
-    if not tracks:
-        return
-    added = playlist_to_queue(m.chat.id, tracks)
-    await app.send_message(
-        chat_id=m.chat.id,
-        text=m.lang["playlist_queued"].format(len(tracks)) + added,
-        )
-                                              
+    return wrapper
+    
