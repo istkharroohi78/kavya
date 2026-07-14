@@ -8,7 +8,6 @@
 # All rights reserved.
 #
 
-import os  # <--- CRITICAL FIX: Yeh import miss ho gaya tha
 from pathlib import Path
 from pyrogram import filters, types
 from KartikMusic import Kartik, app, config, db, lang, queue, tg, yt
@@ -34,8 +33,12 @@ def playlist_to_queue(chat_id: int, tracks: list) -> str:
     return text
 
 
+# BINA COMMAND (Bina /) KE BHI CHALNE KE LIYE: Yahan humne filters.text bhi add kar diya hai
 @app.on_message(
-    filters.command(["play", "playforce", "vplay", "vplayforce"])
+    (
+        filters.command(["play", "playforce", "vplay", "vplayforce"]) 
+        | (filters.text & ~filters.command([]))  # Agar sirf normal text message ho toh bhi utha le
+    )
     & filters.group
     & ~app.bl_users
 )
@@ -81,8 +84,13 @@ async def play_hndlr(
                 m.lang["play_not_found"].format(config.SUPPORT_CHAT)
             )
 
-    elif len(m.command) >= 2:
-        query = " ".join(m.command[1:])
+    # Agar user ne /play likha ho ya sirf text likha ho dono case handle karega
+    elif (m.command and len(m.command) >= 2) or (m.text and not m.text.startswith(("/", "!"))):
+        if m.command and len(m.command) >= 2:
+            query = " ".join(m.command[1:])
+        else:
+            query = m.text  # Agar bina slash ke bheja hai toh pura text query ban jayega
+
         file = await yt.search(query, sent.id, video=video)
         if not file:
             return await sent.edit_text(
@@ -159,8 +167,8 @@ async def play_hndlr(
             except Exception:
                 file.file_path = await yt.download(file.id, video=video)
 
-    # Ab 'os' successfully imported hai, crash nahi hoga!
-    if file.file_path and os.path.exists(file.file_path):
+    # Aapke purane logic ke hisab se os import hata diya hai (Path module already upar imported hai toh error nahi aayega)
+    if file.file_path and Path(file.file_path).exists():
         file.url = file.file_path
 
     await Kartik.play_media(chat_id=m.chat.id, message=sent, media=file)
@@ -170,5 +178,5 @@ async def play_hndlr(
     await app.send_message(
         chat_id=m.chat.id,
         text=m.lang["playlist_queued"].format(len(tracks)) + added,
-    )
+        )
     
