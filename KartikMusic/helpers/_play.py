@@ -26,31 +26,23 @@ def checkUB(play):
             await m.reply_text(m.lang["play_chat_invalid"])
             return await app.leave_chat(chat_id)
 
-        # 100% Crash Fix: Safe command extraction (NoneType error avoided)
-        command = m.command or []
-        cmd_name = command[0] if command else ""
-
-        if not m.reply_to_message:
-            if command:
-                if len(command) < 2 or (len(command) == 2 and command[1] == "-f"):
-                    return await m.reply_text(m.lang["play_usage"])
-            elif not m.text:
-                return await m.reply_text(m.lang["play_usage"])
+        if not m.reply_to_message and (
+            len(m.command) < 2 or (len(m.command) == 2 and m.command[1] == "-f")
+        ):
+            return await m.reply_text(m.lang["play_usage"])
 
         if len(queue.get_queue(chat_id)) >= config.QUEUE_LIMIT:
             return await m.reply_text(
                 m.lang["play_queue_full"].format(config.QUEUE_LIMIT)
             )
 
-        # Safe checks for 'force' and 'video'
         force = (
             kwargs.get("force")
-            or cmd_name.endswith("force")
-            or (len(command) > 1 and "-f" in command[1])
+            or m.command[0].endswith("force")
+            or (len(m.command) > 1 and "-f" in m.command[1])
         )
-        video = kwargs.get("video") or (cmd_name and cmd_name.startswith("v") and config.VIDEO_PLAY)
+        video = kwargs.get("video") or (m.command[0][0] == "v" and config.VIDEO_PLAY)
         url = kwargs.get("url") or utils.get_url(m)
-        
         if url and yt.invalid(url):
             return await m.reply_text(
                 m.lang["play_not_found"].format(config.SUPPORT_CHAT)
@@ -144,4 +136,3 @@ def checkUB(play):
         return await play(_, m, force=force, m3u8=m3u8, video=video, url=url)
 
     return wrapper
-    
