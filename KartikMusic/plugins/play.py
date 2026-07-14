@@ -14,15 +14,6 @@ from KartikMusic import Kartik, app, config, db, lang, queue, tg, yt
 from KartikMusic.helpers import buttons, utils
 from KartikMusic.helpers._play import checkUB
 
-from KartikMusic.plugins.downloaders import download_cached_track
-
-class CachedTrackWrapper:
-    def __init__(self, platform: str, url: str = None, track_id: str = None, is_video: bool = False):
-        self.platform = platform
-        self.url = url
-        self.track_id = track_id
-        self.is_video = is_video
-
 
 def playlist_to_queue(chat_id: int, tracks: list) -> str:
     text = "<blockquote expandable>"
@@ -33,11 +24,11 @@ def playlist_to_queue(chat_id: int, tracks: list) -> str:
     return text
 
 
-# BINA COMMAND (Bina /) KE BHI CHALNE KE LIYE: Yahan humne filters.text bhi add kar diya hai
+# BINA COMMAND (Bina /) KE BHI CHALNE KE LIYE FILTER
 @app.on_message(
     (
         filters.command(["play", "playforce", "vplay", "vplayforce"]) 
-        | (filters.text & ~filters.command([]))  # Agar sirf normal text message ho toh bhi utha le
+        | (filters.text & ~filters.command([]))
     )
     & filters.group
     & ~app.bl_users
@@ -84,12 +75,12 @@ async def play_hndlr(
                 m.lang["play_not_found"].format(config.SUPPORT_CHAT)
             )
 
-    # Agar user ne /play likha ho ya sirf text likha ho dono case handle karega
+    # Command aur normal text dono handle karne ke liye logic
     elif (m.command and len(m.command) >= 2) or (m.text and not m.text.startswith(("/", "!"))):
         if m.command and len(m.command) >= 2:
             query = " ".join(m.command[1:])
         else:
-            query = m.text  # Agar bina slash ke bheja hai toh pura text query ban jayega
+            query = m.text
 
         file = await yt.search(query, sent.id, video=video)
         if not file:
@@ -147,27 +138,9 @@ async def play_hndlr(
             file.file_path = str(Path(fname).absolute())
         else:
             await sent.edit_text(m.lang["play_downloading"])
-            
-            if getattr(file, "url", None) and ("t.me/" in file.url):
-                platform_type = "telegram"
-            elif getattr(file, "url", None) and file.url.startswith(("http://", "https://")):
-                platform_type = "direct_link"
-            else:
-                platform_type = "external"
+            # Jo module missing tha uski wajah se crash na ho, isliye seedhe standard downloader use hoga
+            file.file_path = await yt.download(file.id, video=video)
 
-            cached_obj = CachedTrackWrapper(
-                platform=platform_type, 
-                url=getattr(file, "url", f"https://www.youtube.com/watch?v={file.id}"), 
-                track_id=getattr(file, "id", None), 
-                is_video=video
-            )
-            
-            try:
-                file.file_path = await download_cached_track(cached_obj, app)
-            except Exception:
-                file.file_path = await yt.download(file.id, video=video)
-
-    # Aapke purane logic ke hisab se os import hata diya hai (Path module already upar imported hai toh error nahi aayega)
     if file.file_path and Path(file.file_path).exists():
         file.url = file.file_path
 
@@ -179,4 +152,4 @@ async def play_hndlr(
         chat_id=m.chat.id,
         text=m.lang["playlist_queued"].format(len(tracks)) + added,
         )
-    
+                                              
